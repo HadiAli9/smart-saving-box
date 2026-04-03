@@ -1,0 +1,115 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    
+    function uidUnchanged() {
+      return !('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid;
+    }
+    
+    function uidNotModified() {
+      return !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId;
+    }
+    
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return hasRequiredFields(['email', 'createdAt']) &&
+             data.email is string && data.email.size() > 0 && data.email.size() < 100 &&
+             (!('name' in data) || (data.name is string && data.name.size() <= 100)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1000)) &&
+             (!('pinCode' in data) || (data.pinCode is string && data.pinCode.size() <= 10)) &&
+             (!('defaultCurrency' in data) || (data.defaultCurrency is string && data.defaultCurrency.size() <= 10)) &&
+             (!('totalPoints' in data) || data.totalPoints is number) &&
+             (!('currentStreak' in data) || data.currentStreak is number) &&
+             (!('lastSavedDate' in data) || (data.lastSavedDate is string && data.lastSavedDate.size() <= 30)) &&
+             data.createdAt is string && data.createdAt.size() <= 30;
+    }
+
+    function isValidSavingBox(data) {
+      return hasRequiredFields(['userId', 'name', 'goalAmount', 'currentAmount', 'colorTheme', 'createdAt', 'updatedAt']) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.goalAmount is number && data.goalAmount >= 0 &&
+             data.currentAmount is number && data.currentAmount >= 0 &&
+             data.colorTheme is string && data.colorTheme.size() <= 50 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 500)) &&
+             data.createdAt is string && data.createdAt.size() <= 30 &&
+             data.updatedAt is string && data.updatedAt.size() <= 30;
+    }
+
+    function isValidTransaction(data) {
+      return hasRequiredFields(['userId', 'boxId', 'amount', 'type', 'date', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.boxId is string && data.boxId.size() > 0 && data.boxId.size() <= 100 &&
+             data.amount is number && data.amount > 0 &&
+             data.type in ['add', 'withdraw'] &&
+             (!('note' in data) || (data.note is string && data.note.size() <= 500)) &&
+             data.date is string && data.date.size() <= 30 &&
+             data.createdAt is string && data.createdAt.size() <= 30;
+    }
+
+    function isValidAchievement(data) {
+      return hasRequiredFields(['userId', 'achievementId', 'unlockedAt']) &&
+             data.userId == request.auth.uid &&
+             data.achievementId is string && data.achievementId.size() > 0 && data.achievementId.size() <= 100 &&
+             data.unlockedAt is string && data.unlockedAt.size() <= 30;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
+
+    match /savingBoxes/{boxId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidSavingBox(request.resource.data);
+      allow update: if isDocOwner() && isValidSavingBox(request.resource.data) && uidNotModified() && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isDocOwner();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
+      allow update: if isDocOwner() && isValidTransaction(request.resource.data) && uidNotModified() && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isDocOwner();
+    }
+
+    match /achievements/{achievementDocId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidAchievement(request.resource.data);
+      allow update: if isDocOwner() && isValidAchievement(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner();
+    }
+  }
+}
